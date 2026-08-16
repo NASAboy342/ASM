@@ -1,0 +1,404 @@
+@page "/mgmt/app-settings/editor"
+@using AppSettingsManager.Models
+@using AppSettingsManager.Services
+@rendermode RenderMode.InteractiveServer
+
+<PageTitle>Settings Editor</PageTitle>
+
+<div class="container-fluid py-4">
+    <h1 class="mb-4">Settings Editor</h1>
+
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item">
+                <a href="/mgmt/app-settings">Projects</a>
+            </li>
+            <li class="breadcrumb-item active" aria-current="page">@projectName</li>
+        </ol>
+    </nav>
+
+    @if (projectInfo != null)
+    {
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <p class="mb-1"><strong>Path:</strong></p>
+                <code class="text-break">@projectInfo.Path</code>
+            </div>
+            <div class="col-md-3">
+                <p class="mb-1"><strong>Environment:</strong></p>
+                <span class="badge env-@projectInfo.Environment.ToLower()">@projectInfo.Environment</span>
+            </div>
+            <div class="col-md-3">
+                <p class="mb-1"><strong>Last Modified:</strong></p>
+                <p class="mb-0">@projectInfo.LastModified.ToString("yyyy-MM-dd HH:mm:ss")</p>
+            </div>
+        </div>
+        
+        @if (projectInfo != null && projectInfo.AppSettingsFiles.Count > 1)
+        {
+            <div class="row mb-3">
+                <div class="col-md-8">
+                    <label for="envFileSelector" class="form-label"><strong>Select Environment File:</strong></label>
+                    <select id="envFileSelector" class="form-select" @bind="selectedEnvironmentFile" @bind:event="onchange">
+                        @foreach (var fileKey in projectInfo.AppSettingsFiles.Keys.OrderBy(k => k))
+                        {
+                            <option value="@fileKey">@fileKey</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button class="btn btn-sm btn-outline-secondary w-100" @onclick="SwitchEnvironmentFile">
+                        Switch to Selected
+                    </button>
+                </div>
+            </div>
+        }
+
+        <div class="row mb-3">
+            <div class="col-12">
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-outline-primary" @onclick="ExpandAll">
+                        Expand All
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" @onclick="CollapseAll">
+                        Collapse All
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" @onclick="ResetChanges">
+                        Reset
+                    </button>
+                    <button type="button"
+                            class="btn btn-success"
+                            @onclick="HandleSave"
+                            disabled="@(changeCount == 0)">
+                        Save (@changeCount changes)
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Configuration Settings</h5>
+            </div>
+            <div class="card-body" style="max-height: 70vh; overflow-y: auto;">
+                @if (rootNode != null)
+                {
+                    <JsonTree 
+                        Nodes="rootNode.Children"
+                        IndentLevel="0"
+                        OnValueChanged="OnNodeValueChanged" />
+                }
+                else
+                {
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading settings...</p>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-warning">
+            No project selected. <a href="/mgmt/app-settings">Go back to projects</a>
+        </div>
+    }
+
+    @if (showConfirmDialog)
+    {
+        <ConfirmDialog OnConfirm="ConfirmSave" OnCancel="CancelSave" />
+    }
+
+    @if (showDiffModal)
+    {
+        <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header bg-info text-white">
+                        <h5 class="modal-title">Change Preview</h5>
+                        <button type="button" class="btn-close btn-close-white" @onclick="CloseDiffPreview"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Review the changes before applying:</p>
+                        <DiffViewer Changes="changes" />
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CloseDiffPreview">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn-primary" @onclick="ProceedToSave">
+                            Continue to Confirm
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private SettingNode? rootNode;
+    private ProjectInfo? projectInfo;
+    private string projectName = string.Empty;
+    private string appSettingsPath = string.Empty;
+    private int changeCount = 0;
+    private bool showConfirmDialog = false;
+    private bool showDiffModal = false;
+    private List<ChangeDiff> changes = [];
+
+    [Inject]
+    private SettingsService? SettingsService { get; set; }
+
+    [Inject]
+    private NavigationManager? Navigation { get; set; }
+
+    [SupplyParameterFromQuery]
+    private string? Path { get; set; }
+    
+    [SupplyParameterFromQuery]
+    private string? Files { get; set; }
+    
+    [SupplyParameterFromQuery]
+    private string? Environment { get; set; }
+    
+    private string selectedEnvironmentFile = "appsettings.json";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Manually parse query parameters as a fallback for Blazor Server
+        if (Navigation != null)
+        {
+            var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+            var query = uri.Query;
+            if (query.StartsWith("?"))
+                query = query.Substring(1);
+            
+            var queryParams = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(query);
+            if (queryParams.ContainsKey("path") && string.IsNullOrEmpty(Path))
+                Path = queryParams["path"][0];
+            if (queryParams.ContainsKey("files") && string.IsNullOrEmpty(Files))
+                Files = queryParams["files"][0];
+            if (queryParams.ContainsKey("environment") && string.IsNullOrEmpty(Environment))
+                Environment = queryParams["environment"][0];
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrEmpty(Path))
+        {
+            appSettingsPath = Uri.UnescapeDataString(Path);
+            await LoadSettings();
+            
+            // Initialize the selected file from the Files query parameter
+            if (!string.IsNullOrEmpty(Files) && projectInfo != null)
+            {
+                var fileKeys = Files.Split('|');
+                if (fileKeys.Contains(selectedEnvironmentFile) || fileKeys.Contains("appsettings.json"))
+                {
+                    // Files list contains available environment files
+                }
+            }
+        }
+    }
+    
+    private async Task SwitchEnvironmentFile()
+    {
+        if (projectInfo != null && projectInfo.AppSettingsFiles.ContainsKey(selectedEnvironmentFile))
+        {
+            appSettingsPath = projectInfo.AppSettingsFiles[selectedEnvironmentFile];
+            projectName = selectedEnvironmentFile;
+            await LoadSettings();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadSettings()
+    {
+        if (SettingsService == null) return;
+
+        try
+        {
+            var fileInfo = new FileInfo(appSettingsPath);
+            if (!fileInfo.Exists)
+            {
+                return;
+            }
+
+            rootNode = SettingsService.ReadSettings(appSettingsPath);
+            projectName = fileInfo.Name;
+            
+            // Parse the Files query parameter to populate AppSettingsFiles
+            var appSettingsFiles = new Dictionary<string, string>
+            {
+                { fileInfo.Name, appSettingsPath }
+            };
+            
+            if (!string.IsNullOrEmpty(Files))
+            {
+                var fileKeys = Files.Split('|');
+                foreach (var fileKey in fileKeys)
+                {
+                    var fullPath = System.IO.Path.Combine(fileInfo.Directory!.FullName, fileKey);
+                    if (System.IO.File.Exists(fullPath))
+                    {
+                        appSettingsFiles[fileKey] = fullPath;
+                    }
+                }
+            }
+            
+            projectInfo = new ProjectInfo
+            {
+                Name = fileInfo.Name,
+                Path = fileInfo.Directory?.FullName ?? "",
+                AppSettingsPath = appSettingsPath,
+                LastModified = fileInfo.LastWriteTime,
+                Environment = DetectEnvironment(fileInfo.Directory?.FullName ?? ""),
+                AppSettingsFiles = appSettingsFiles
+            };
+            
+            // Initialize selected file
+            selectedEnvironmentFile = fileInfo.Name;
+
+            changeCount = 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading settings: {ex.Message}");
+        }
+    }
+
+    private string DetectEnvironment(string path)
+    {
+        var pathLower = path.ToLower();
+
+        if (pathLower.Contains("production") || pathLower.Contains("prod"))
+            return "Production";
+        if (pathLower.Contains("staging") || pathLower.Contains("stage"))
+            return "Staging";
+        if (pathLower.Contains("development") || pathLower.Contains("dev"))
+            return "Development";
+
+        return "Production";
+    }
+
+    private async Task OnNodeValueChanged(SettingNode node)
+    {
+        changeCount = CountChanges(rootNode);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private int CountChanges(SettingNode node)
+    {
+        int count = 0;
+        foreach (var child in node.Children)
+        {
+            if (child.IsValueChanged)
+                count++;
+            else if (child.Children.Count > 0)
+                count += CountChanges(child);
+        }
+        return count;
+    }
+
+    private void ExpandAll()
+    {
+        if (rootNode != null)
+        {
+            ExpandNode(rootNode);
+        }
+    }
+
+    private void ExpandNode(SettingNode node)
+    {
+        node.IsExpanded = true;
+        if (node.Children != null)
+        {
+            foreach (var child in node.Children)
+            {
+                ExpandNode(child);
+            }
+        }
+    }
+
+    private void CollapseAll()
+    {
+        if (rootNode != null)
+        {
+            CollapseNode(rootNode);
+        }
+    }
+
+    private void CollapseNode(SettingNode node)
+    {
+        node.IsExpanded = false;
+        if (node.Children != null)
+        {
+            foreach (var child in node.Children)
+            {
+                CollapseNode(child);
+            }
+        }
+    }
+
+    private async Task ResetChanges()
+    {
+        if (rootNode != null)
+        {
+            await LoadSettings();
+        }
+        changeCount = 0;
+        StateHasChanged();
+    }
+
+    private async Task HandleSave()
+    {
+        if (rootNode == null || SettingsService == null) return;
+
+        changes = SettingsService.GetChanges(rootNode);
+        changeCount = changes.Count;
+
+        if (changeCount > 0)
+        {
+            showDiffModal = true;
+        }
+
+        StateHasChanged();
+    }
+
+    private void CloseDiffPreview()
+    {
+        showDiffModal = false;
+    }
+
+    private void ProceedToSave()
+    {
+        showDiffModal = false;
+        showConfirmDialog = true;
+    }
+
+    private async Task ConfirmSave()
+    {
+        showConfirmDialog = false;
+        if (rootNode == null || SettingsService == null) return;
+
+        try
+        {
+            SettingsService.SaveSettings(appSettingsPath, rootNode);
+            await LoadSettings();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving settings: {ex.Message}");
+        }
+    }
+
+    private void CancelSave()
+    {
+        showConfirmDialog = false;
+    }
+}

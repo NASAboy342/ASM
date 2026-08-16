@@ -1,0 +1,70 @@
+@using AppSettingsManager.Models
+
+@* DiffViewer Component - Side-by-side diff view of changes *@
+<div class="diff-viewer">
+    @if (Changes.Count == 0)
+    {
+        <div class="alert alert-info">No changes detected.</div>
+    }
+    else
+    {
+        <h5>Changes Preview (@Changes.Count changes)</h5>
+        <div class="table-responsive">
+            <table class="table table-sm table-striped">
+                <thead>
+                    <tr>
+                        <th>Path</th>
+                        <th>Old Value</th>
+                        <th>New Value</th>
+                        <th>Type</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var change in Changes)
+                    {
+                        <tr class="@GetChangeRowClass(change)">
+                            <td>
+                                <code>@change.Path</code>
+                            </td>
+                            <td>
+                                @if (change.IsRemoved)
+                                {
+                                    <span class="text-danger text-decoration-line-through">REMOVED</span>
+                                }
+                                else
+                                {
+                                    <code>@change.OldValue</code>
+                                }
+                            </td>
+                            <td>
+                                @if (change.IsAdded)
+                                {
+                                    <span class="text-success">ADDED</span>
+                                }
+                                else
+                                {
+                                    <code>@change.NewValue</code>
+                                }
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary">Value Change</span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public List<ChangeDiff> Changes { get; set; } = [];
+
+    private string GetChangeRowClass(ChangeDiff change)
+    {
+        if (change.IsRemoved) return "table-danger";
+        if (change.IsAdded) return "table-success";
+        return "";
+    }
+}

@@ -1,0 +1,125 @@
+@using AppSettingsManager.Models
+
+@* JsonTree Component - Recursive tree structure for displaying/editing JSON settings *@
+<div class="json-tree">
+    @foreach (var node in Nodes)
+    {
+        <div class="tree-node" style="margin-left: @(IndentLevel * 20)px;">
+            @if (node.NodeType is "object" or "array")
+            {
+                <div class="tree-node-header" @onclick="() => ToggleExpand(node)">
+                    <span class="expand-icon">@GetExpandIcon(node)</span>
+                    <span class="node-key">@node.Key</span>
+                    <span class="node-type badge">@node.NodeType</span>
+                    @if (node.NodeType == "array" && !string.IsNullOrEmpty(node.Value))
+                    {
+                        <span class="node-value">@node.Value</span>
+                    }
+                </div>
+                
+                @if (node.IsExpanded && node.Children.Count > 0)
+                {
+                    <div class="tree-node-children">
+                        <JsonTree 
+                            Nodes="node.Children"
+                            IndentLevel="@(IndentLevel + 1)"
+                            OnValueChanged="OnValueChanged"
+                            ReadOnly="ReadOnly" />
+                    </div>
+                }
+                else if (node.IsExpanded)
+                {
+                    <div class="tree-node-empty">
+                        <span class="text-muted">{ }</span>
+                    </div>
+                }
+            }
+            else
+            {
+                <div class="tree-node-leaf">
+                    <span class="expand-icon"> </span>
+                    <span class="node-key">@node.Key</span>
+                    <span class="node-type badge">@node.NodeType</span>
+                    
+                    @if (node.NodeType == "boolean")
+                    {
+                        <label class="form-check-label ms-2">
+                            <input type="checkbox"
+                                   class="form-check-input"
+                                   checked="@ParseBool(node.Value)"
+                                   @onchange="@(async (e) => await OnValueChange(node, e.Value is true ? "true" : "false"))"
+                                   disabled="@ReadOnly" />
+                        </label>
+                    }
+                    else if (node.NodeType == "number")
+                    {
+                        <input type="number"
+                               class="form-control form-control-sm ms-2 value-input"
+                               value="@node.Value"
+                               @oninput="@(async (e) => await OnValueChange(node, e.Value as string))"
+                               @onchange="@(async (e) => await OnValueChange(node, e.Value as string))"
+                               disabled="@ReadOnly" />
+                    }
+                    else
+                    {
+                        <input type="text"
+                               class="form-control form-control-sm ms-2 value-input"
+                               value="@node.Value"
+                               @oninput="@(async (e) => await OnValueChange(node, e.Value as string))"
+                               @onchange="@(async (e) => await OnValueChange(node, e.Value as string))"
+                               disabled="@ReadOnly" />
+                    }
+                    
+                    @if (node.IsValueChanged)
+                    {
+                        <span class="badge bg-warning ms-2">Modified</span>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public List<SettingNode> Nodes { get; set; } = [];
+    
+    [Parameter]
+    public int IndentLevel { get; set; } = 0;
+    
+    [Parameter]
+    public EventCallback<SettingNode> OnValueChanged { get; set; }
+    
+    [Parameter]
+    public bool ReadOnly { get; set; } = false;
+
+    private void ToggleExpand(SettingNode node)
+    {
+        node.IsExpanded = !node.IsExpanded;
+    }
+
+    private string GetExpandIcon(SettingNode node)
+    {
+        return node.IsExpanded ? "▼" : "▶";
+    }
+
+    private bool ParseBool(string? value)
+    {
+        return bool.TryParse(value, out var result) && result;
+    }
+
+    private async Task OnValueChange(SettingNode node, string newValue)
+    {
+        node.Value = newValue;
+        if (newValue != node.OriginalValue)
+        {
+            node.IsValueChanged = true;
+        }
+        else
+        {
+            node.IsValueChanged = false;
+        }
+        
+        await OnValueChanged.InvokeAsync(node);
+    }
+}

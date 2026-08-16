@@ -1,0 +1,23 @@
+﻿@inherits LayoutComponentBase
+
+<PageTitle>App Settings Manager</PageTitle>
+
+<div class="app-shell">
+    <aside class="app-sidebar">
+        <NavMenu />
+    </aside>
+
+    <main class="app-main">
+        <header class="app-header">
+            <div>
+                <span class="eyebrow">Configuration</span>
+                <h2 class="header-title">App Settings Manager</h2>
+            </div>
+            <a class="header-link" href="/mgmt/app-settings">Open projects</a>
+        </header>
+
+        <article class="app-content">
+            @Body
+        </article>
+    </main>
+</div>

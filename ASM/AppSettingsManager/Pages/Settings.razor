@@ -1,0 +1,821 @@
+@page "/mgmt/app-settings/settings"
+@using AppSettingsManager.Models
+@using AppSettingsManager.Services
+@rendermode RenderMode.InteractiveServer
+@inject NotificationService NotificationService
+
+<PageTitle>Settings</PageTitle>
+
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="mb-0">Directory Settings</h1>
+        <button class="btn btn-primary" @onclick="RefreshDirectories">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item">
+                <a href="/mgmt/app-settings">Projects</a>
+            </li>
+            <li class="breadcrumb-item active" aria-current="page">Settings</li>
+        </ol>
+    </nav>
+
+    @* Add Directory Section *@
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-plus-circle"></i> Add New Directory</h5>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-5">
+                    <label for="newDirectoryPath" class="form-label">Directory Path</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="bi bi-folder"></i></span>
+                        <input type="text"
+                               id="newDirectoryPath"
+                               class="form-control"
+                               placeholder="Enter or paste directory path..."
+                               @bind="newDirectoryPath"
+                               @bind:event="oninput" />
+                        <button class="btn btn-outline-secondary" @onclick="ValidateNewDirectory" disabled="@string.IsNullOrWhiteSpace(newDirectoryPath)">
+                            Validate
+                        </button>
+                    </div>
+                    @if (newDirectoryValidation != null)
+                    {
+                        <div class="mt-2">
+                            <small class="@(newDirectoryValidation.Value ? "text-success" : "text-danger")">
+                                <i class="bi bi-@(newDirectoryValidation.Value ? "check-circle" : "x-circle")"></i>
+                                @(newDirectoryValidation.Value ? "Directory exists and is accessible" : "Directory not found")
+                            </small>
+                        </div>
+                    }
+                </div>
+                <div class="col-md-4">
+                    <label for="newDisplayName" class="form-label">Display Name (Optional)</label>
+                    <input type="text"
+                           id="newDisplayName"
+                           class="form-control"
+                           placeholder="e.g., Production Servers"
+                           @bind="newDisplayName"
+                           @bind:event="oninput" />
+                    <div class="form-text">Leave empty to auto-generate from folder name</div>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button class="btn btn-success w-100" 
+                            @onclick="AddDirectory" 
+                            disabled="@(!isValidDirectory || addingDirectory)">
+                        @if (addingDirectory)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        }
+                        <i class="bi bi-plus"></i> Add Directory
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* Directory List *@
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-folder2-open"></i> Configured Directories (@hostDirectories.Count)</h5>
+            @if (hostDirectories.Any())
+            {
+                <button class="btn btn-sm btn-outline-danger" @onclick="() => ClearAllDirectories()">
+                    <i class="bi bi-trash"></i> Clear All
+                </button>
+            }
+        </div>
+        <div class="card-body p-0">
+            @if (hostDirectories.Any())
+            {
+                <div class="list-group list-group-flush">
+                    @for (int i = 0; i < hostDirectories.Count; i++)
+                    {
+                        var dir = hostDirectories[i];
+                        var index = i; // Capture loop variable to avoid closure issue
+                        <div class="list-group-item">
+                            <div class="row align-items-center">
+                                <div class="col-md-5">
+                                    <div class="d-flex align-items-center">
+                                        <i class="bi bi-folder-fill text-warning me-2"></i>
+                                        <div>
+                                            <strong>@dir.GetDisplayName()</strong>
+                                            <div class="text-muted small text-break">@dir.Path</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="text-muted small">
+                                        <i class="bi bi-calendar"></i> Added: @dir.AddedDate.ToString("yyyy-MM-dd HH:mm")
+                                    </div>
+                                </div>
+                                <div class="col-md-4 text-end">
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        @if (index > 0)
+                                        {
+                                            <button class="btn btn-outline-secondary" 
+                                                    @onclick="() => MoveDirectoryUp(index)" 
+                                                    title="Move Up">
+                                                <i class="bi bi-arrow-up"></i>
+                                            </button>
+                                        }
+                                        @if (index < hostDirectories.Count - 1)
+                                        {
+                                            <button class="btn btn-outline-secondary" 
+                                                    @onclick="() => MoveDirectoryDown(index)" 
+                                                    title="Move Down">
+                                                <i class="bi bi-arrow-down"></i>
+                                            </button>
+                                        }
+                                        <button class="btn btn-outline-primary" 
+                                                @onclick="() => EditDirectory(index)" 
+                                                title="Edit">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger" 
+                                                @onclick="() => RemoveDirectory(index)" 
+                                                title="Remove">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="p-4 text-center">
+                    <i class="bi bi-folder-plus display-1 text-muted"></i>
+                    <p class="mt-3 text-muted">No directories configured yet. Add a directory above to get started.</p>
+                </div>
+            }
+        </div>
+    </div>
+
+    @* Delete Confirmation Modal - Use Bootstrap modal with JS show/hide *@
+    @if (showDeleteConfirmation)
+    {
+        <div id="deleteConfirmModal" class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1" role="dialog">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning text-dark">
+                        <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Confirm Delete</h5>
+                        <button type="button" class="btn-close" @onclick="CancelDelete"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-warning">
+                            <strong>Warning:</strong> You are about to remove a hosting directory. This action cannot be undone.
+                        </div>
+
+                        <p class="mb-3">
+                            Please type the following word to confirm:
+                        </p>
+
+                        <div class="text-center mb-3">
+                            <h4 class="text-primary font-monospace">@deleteConfirmationWord</h4>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="deleteConfirmInput" class="form-label">Type the word above:</label>
+                            <input type="text" id="deleteConfirmInput" class="form-control form-control-lg text-center"
+                                   placeholder="Enter confirmation word"
+                                   @bind="deleteConfirmInput"
+                                   @bind:event="oninput" />
+                            @if (!string.IsNullOrEmpty(deleteErrorMessage))
+                            {
+                                <div class="text-danger mt-2">@deleteErrorMessage</div>
+                            }
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CancelDelete" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-danger" @onclick="ConfirmDelete" disabled="@(string.IsNullOrWhiteSpace(deleteConfirmInput) || deleteConfirmInput?.Trim() != deleteConfirmationWord?.Trim())">
+                            <i class="bi bi-trash"></i> Delete Directory
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* Clear All Confirmation Modal *@
+    @if (showClearAllConfirmation)
+    {
+        <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1" role="dialog">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+                <div class="modal-content">
+                    <div class="modal-header bg-danger text-white">
+                        <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Confirm Clear All</h5>
+                        <button type="button" class="btn-close btn-close-white" @onclick="CancelClearAll"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-danger">
+                            <strong>⚠️ WARNING:</strong> You are about to remove <strong>ALL @hostDirectories.Count hosting directories</strong> from the configuration. This action is permanent and cannot be undone.
+                        </div>
+
+                        <p class="mb-3">
+                            Please type the following word to confirm:
+                        </p>
+
+                        <div class="text-center mb-3">
+                            <h4 class="text-danger font-monospace">@clearAllConfirmationWord</h4>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="clearAllConfirmInput" class="form-label">Type the word above:</label>
+                            <input type="text" id="clearAllConfirmInput" class="form-control form-control-lg text-center"
+                                   placeholder="Enter confirmation word"
+                                   @bind="clearAllConfirmInput"
+                                   @bind:event="oninput" />
+                            @if (!string.IsNullOrEmpty(clearAllErrorMessage))
+                            {
+                                <div class="text-danger mt-2">@clearAllErrorMessage</div>
+                            }
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CancelClearAll">Cancel</button>
+                        <button type="button" class="btn btn-danger" @onclick="ConfirmClearAll" disabled="@(string.IsNullOrWhiteSpace(clearAllConfirmInput) || clearAllConfirmInput?.Trim() != clearAllConfirmationWord?.Trim())">
+                            <i class="bi bi-trash"></i> Clear All Directories
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (hostDirectories.Any())
+    {
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Configuration Summary</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <p class="mb-1"><strong>Total Directories:</strong></p>
+                        <span class="badge bg-primary">@hostDirectories.Count</span>
+                    </div>
+                    <div class="col-md-4">
+                        <p class="mb-1"><strong>Total Projects:</strong></p>
+                        <span class="badge bg-info">@totalProjects</span>
+                    </div>
+                    <div class="col-md-4">
+                        <p class="mb-1"><strong>Status:</strong></p>
+                        @if (allDirectoriesValid)
+                        {
+                            <span class="badge bg-success">✓ All Valid</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-warning">⚠ Some Invalid</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* Edit Directory Modal - Use Bootstrap modal with JS show/hide *@
+    <div id="editDirectoryModal" class="modal fade" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-pencil"></i> Edit Directory</h5>
+                    <button type="button" class="btn-close" @onclick="CancelEdit"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="editDirectoryPath" class="form-label">Directory Path</label>
+                        <input type="text" id="editDirectoryPath" class="form-control" 
+                               placeholder="Enter directory path..." 
+                               @bind="editingPath" 
+                               @bind:event="oninput" />
+                    </div>
+                    <div class="mb-3">
+                        <label for="editDisplayName" class="form-label">Display Name (Optional)</label>
+                        <input type="text" id="editDisplayName" class="form-control" 
+                               placeholder="e.g., Production Servers" 
+                               @bind="editingDisplayName" 
+                               @bind:event="oninput" />
+                        <div class="form-text">Leave empty to auto-generate from folder name</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CancelEdit">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveEdit">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (message != null)
+    {
+        <div class="alert alert-@messageType mt-3 alert-dismissible fade show" role="alert">
+            @message
+            <button type="button" class="btn-close" @onclick="(() => { message = null; })"></button>
+        </div>
+    }
+</div>
+
+<style>
+    .list-group-item {
+        transition: background-color 0.2s ease;
+    }
+
+    .list-group-item:hover {
+        background-color: #f8f9fa;
+    }
+
+    .btn-group .btn {
+        margin: 0 2px;
+    }
+</style>
+
+@inject IJSRuntime JSRuntime
+@inject AppConfigurationService ConfigurationService
+@inject ProjectDiscoveryService ProjectDiscoveryService
+
+@code {
+    private List<HostDirectoryInfo> hostDirectories = new();
+    private string newDirectoryPath = string.Empty;
+    private string newDisplayName = string.Empty;
+    private bool? newDirectoryValidation = null;
+    private bool isValidDirectory = false;
+    private bool addingDirectory = false;
+    private string? message = null;
+    private string messageType = "info";
+    private int totalProjects = 0;
+    private bool allDirectoriesValid = true;
+
+    // Edit modal state
+    private int editingIndex = -1;
+    private string editingPath = string.Empty;
+    private string editingDisplayName = string.Empty;
+    private ElementReference editModalRef;
+
+    // Delete confirmation modal state
+    private bool showDeleteConfirmation = false;
+    private int deleteIndex = -1;
+    private string deleteConfirmationWord = string.Empty;
+    private string deleteConfirmInput = string.Empty;
+    private string? deleteErrorMessage = null;
+
+    // Clear All confirmation modal state
+    private bool showClearAllConfirmation = false;
+    private string clearAllConfirmationWord = string.Empty;
+    private string clearAllConfirmInput = string.Empty;
+    private string? clearAllErrorMessage = null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDirectories();
+    }
+
+    private async Task LoadDirectories()
+    {
+        try
+        {
+            if (ConfigurationService != null)
+            {
+                hostDirectories = ConfigurationService.GetHostDirectories();
+                
+                // Calculate totals
+                totalProjects = 0;
+                allDirectoriesValid = true;
+                
+                foreach (var dir in hostDirectories)
+                {
+                    var exists = ConfigurationService.ValidateDirectoryExists(dir.Path);
+                    if (!exists)
+                        allDirectoriesValid = false;
+                    
+                    if (ProjectDiscoveryService != null)
+                    {
+                        var groups = await ProjectDiscoveryService.DiscoverProjectsGroupedByDirectory();
+                        var group = groups.FirstOrDefault(g => g.Directory.Path == dir.Path);
+                        if (group != null)
+                            totalProjects += group.Projects.Count;
+                    }
+                }
+
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            message = $"Error loading directories: {ex.Message}";
+            messageType = "danger";
+        }
+    }
+
+    private async Task ValidateNewDirectory()
+    {
+        if (string.IsNullOrWhiteSpace(newDirectoryPath))
+        {
+            newDirectoryValidation = false;
+            isValidDirectory = false;
+            StateHasChanged();
+            return;
+        }
+
+        if (ConfigurationService != null)
+        {
+            newDirectoryValidation = ConfigurationService.ValidateDirectoryExists(newDirectoryPath);
+            isValidDirectory = newDirectoryValidation.Value;
+            
+            // Auto-fill display name if empty
+            if (string.IsNullOrWhiteSpace(newDisplayName) && newDirectoryValidation.Value)
+            {
+                newDisplayName = Path.GetFileName(newDirectoryPath) ?? newDirectoryPath;
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task AddDirectory()
+    {
+        if (string.IsNullOrWhiteSpace(newDirectoryPath) || !isValidDirectory)
+            return;
+
+        addingDirectory = true;
+        message = null;
+        StateHasChanged();
+
+        try
+        {
+            if (ConfigurationService != null)
+            {
+                var success = ConfigurationService.AddHostDirectory(newDirectoryPath, string.IsNullOrWhiteSpace(newDisplayName) ? null : newDisplayName);
+                
+                if (success)
+                {
+                    message = $"Directory '{newDisplayName ?? newDirectoryPath}' added successfully!";
+                    messageType = "success";
+                    
+                    // Reset form
+                    newDirectoryPath = string.Empty;
+                    newDisplayName = string.Empty;
+                    newDirectoryValidation = null;
+                    isValidDirectory = false;
+                    
+                    // Reload directories
+                    await LoadDirectories();
+                    
+                    // Notify ProjectList to refresh
+                    NotificationService.Broadcast("directories_changed");
+                }
+                else
+                {
+                    message = "This directory is already configured.";
+                    messageType = "warning";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            message = $"Error adding directory: {ex.Message}";
+            messageType = "danger";
+        }
+        finally
+        {
+            addingDirectory = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RemoveDirectory(int index)
+    {
+        deleteIndex = index;
+        deleteConfirmInput = string.Empty;
+        deleteErrorMessage = null;
+        deleteConfirmationWord = GenerateConfirmationWord();
+        showDeleteConfirmation = true;
+        
+        StateHasChanged();
+        
+        // Focus the input after modal appears
+        await Task.Delay(100);
+        if (JSRuntime != null)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("focusDeleteConfirmInput");
+            }
+            catch
+            {
+                // Ignore focus errors
+            }
+        }
+    }
+
+    private void CancelDelete()
+    {
+        showDeleteConfirmation = false;
+        deleteIndex = -1;
+        deleteConfirmInput = string.Empty;
+        deleteErrorMessage = null;
+        StateHasChanged();
+    }
+
+    private async Task ConfirmDelete()
+    {
+        Console.WriteLine($"ConfirmDelete called: input='{deleteConfirmInput}', word='{deleteConfirmationWord}', index={deleteIndex}");
+        
+        if (string.IsNullOrWhiteSpace(deleteConfirmInput) || string.IsNullOrWhiteSpace(deleteConfirmationWord))
+        {
+            deleteErrorMessage = "Please enter the confirmation word.";
+            deleteConfirmInput = string.Empty;
+            await Task.Yield();
+            StateHasChanged();
+            return;
+        }
+
+        if (!deleteConfirmInput.Trim().Equals(deleteConfirmationWord.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            deleteErrorMessage = $"Confirmation word does not match. Expected: '{deleteConfirmationWord}'";
+            deleteConfirmInput = string.Empty;
+            await Task.Yield();
+            StateHasChanged();
+            return;
+        }
+
+        if (deleteIndex < 0 || deleteIndex >= hostDirectories.Count)
+        {
+            deleteErrorMessage = "Invalid directory index.";
+            await Task.Yield();
+            StateHasChanged();
+            return;
+        }
+
+        var dir = hostDirectories[deleteIndex];
+        
+        try
+        {
+            Console.WriteLine($"Attempting to delete directory: {dir.Path}");
+            var success = ConfigurationService != null && ConfigurationService.RemoveHostDirectory(dir.Path);
+            
+            if (success)
+            {
+                Console.WriteLine($"Directory deleted successfully: {dir.GetDisplayName()}");
+                message = $"Directory '{dir.GetDisplayName()}' removed.";
+                messageType = "success";
+                showDeleteConfirmation = false;
+                deleteIndex = -1;
+                deleteConfirmInput = string.Empty;
+                deleteErrorMessage = null;
+                
+                // Force complete reload of directories - read directly from file
+                hostDirectories.Clear();
+                hostDirectories.AddRange(ConfigurationService.GetHostDirectories());
+                
+                // Update total counts quickly without expensive project discovery
+                totalProjects = hostDirectories.Count;
+                allDirectoriesValid = true;
+                
+                // Force UI update
+                StateHasChanged();
+                
+                // Notify ProjectList to refresh
+                NotificationService.Broadcast("directories_changed");
+            }
+            else
+            {
+                Console.WriteLine($"Failed to delete directory: {dir.Path}");
+                message = "Failed to remove directory.";
+                messageType = "danger";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception deleting directory: {ex.Message}");
+            message = $"Error removing directory: {ex.Message}";
+            messageType = "danger";
+        }
+        
+        await Task.Yield();
+        StateHasChanged();
+    }
+
+    private string GenerateConfirmationWord()
+    {
+        var words = new[]
+        {
+            "correct", "horse", "battery", "staple", "apple", "banana", "cherry",
+            "dragon", "elephant", "flower", "garden", "harbor", "island", "jungle",
+            "kettle", "latitude", "marathon", "notebook", "orange", "pencil",
+            "quality", "rainbow", "salmon", "tiger", "umbrella", "victory",
+            "window", "xylophone", "yellow", "zebra", "adventure", "bridge",
+            "castle", "diamond", "eagle", "forest", "galaxy", "harmony"
+        };
+
+        var random = new Random();
+        var selected = new List<string>();
+        
+        while (selected.Count < 2)
+        {
+            var word = words[random.Next(words.Length)];
+            if (!selected.Contains(word))
+            {
+                selected.Add(word);
+            }
+        }
+
+        return string.Join("-", selected);
+    }
+
+    private async Task EditDirectory(int index)
+    {
+        if (index < 0 || index >= hostDirectories.Count)
+            return;
+
+        editingIndex = index;
+        editingPath = hostDirectories[index].Path;
+        editingDisplayName = hostDirectories[index].DisplayName;
+        
+        StateHasChanged();
+        
+        // Small delay to ensure DOM updates before showing modal
+        await Task.Delay(50);
+        
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("showEditModal");
+        }
+        catch
+        {
+            // If JS call fails, the modal should still be visible due to display:block style
+        }
+    }
+
+    private async Task SaveEdit()
+    {
+        if (editingIndex < 0 || editingIndex >= hostDirectories.Count)
+            return;
+
+        try
+        {
+            if (ConfigurationService != null)
+            {
+                var oldPath = hostDirectories[editingIndex].Path;
+                ConfigurationService.RemoveHostDirectory(oldPath);
+                
+                var success = ConfigurationService.AddHostDirectory(editingPath, editingDisplayName);
+                
+                if (success)
+                {
+                    message = "Directory updated successfully.";
+                    messageType = "success";
+                    CancelEdit();
+                    await LoadDirectories();
+                    
+                    // Notify ProjectList to refresh
+                    NotificationService.Broadcast("directories_changed");
+                }
+                else
+                {
+                    message = "Failed to update directory.";
+                    messageType = "danger";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            message = $"Error updating directory: {ex.Message}";
+            messageType = "danger";
+        }
+
+        StateHasChanged();
+    }
+
+    private void CancelEdit()
+    {
+        editingIndex = -1;
+        editingPath = string.Empty;
+        editingDisplayName = string.Empty;
+        StateHasChanged();
+    }
+
+    private void MoveDirectoryUp(int index)
+    {
+        if (index <= 0 || index >= hostDirectories.Count)
+            return;
+
+        var temp = hostDirectories[index];
+        hostDirectories[index] = hostDirectories[index - 1];
+        hostDirectories[index - 1] = temp;
+
+        SaveDirectoryOrder();
+    }
+
+    private void MoveDirectoryDown(int index)
+    {
+        if (index < 0 || index >= hostDirectories.Count - 1)
+            return;
+
+        var temp = hostDirectories[index];
+        hostDirectories[index] = hostDirectories[index + 1];
+        hostDirectories[index + 1] = temp;
+
+        SaveDirectoryOrder();
+    }
+
+    private void SaveDirectoryOrder()
+    {
+        if (ConfigurationService != null)
+        {
+            ConfigurationService.SaveHostDirectories(hostDirectories);
+            StateHasChanged();
+        }
+    }
+
+    private async Task ClearAllDirectories()
+    {
+        if (hostDirectories.Any())
+        {
+            clearAllConfirmationWord = GenerateConfirmationWord();
+            clearAllConfirmInput = string.Empty;
+            clearAllErrorMessage = null;
+            showClearAllConfirmation = true;
+            StateHasChanged();
+            
+            // Focus the input after modal appears
+            await Task.Delay(100);
+        }
+    }
+
+    private void CancelClearAll()
+    {
+        showClearAllConfirmation = false;
+        clearAllConfirmInput = string.Empty;
+        clearAllErrorMessage = null;
+        StateHasChanged();
+    }
+
+    private async Task ConfirmClearAll()
+    {
+        Console.WriteLine($"ConfirmClearAll called: input='{clearAllConfirmInput}', word='{clearAllConfirmationWord}'");
+        
+        if (string.IsNullOrWhiteSpace(clearAllConfirmInput) || string.IsNullOrWhiteSpace(clearAllConfirmationWord))
+        {
+            clearAllErrorMessage = "Please enter the confirmation word.";
+            clearAllConfirmInput = string.Empty;
+            StateHasChanged();
+            return;
+        }
+
+        if (!clearAllConfirmInput.Trim().Equals(clearAllConfirmationWord.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            clearAllErrorMessage = $"Confirmation word does not match. Expected: '{clearAllConfirmationWord}'";
+            clearAllConfirmInput = string.Empty;
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            Console.WriteLine($"Attempting to clear all {hostDirectories.Count} directories...");
+            var count = hostDirectories.Count;
+            hostDirectories.Clear();
+            ConfigurationService.SaveHostDirectories(hostDirectories);
+            Console.WriteLine($"All {count} directories cleared successfully.");
+            
+            message = $"All {count} directory(ies) cleared.";
+            messageType = "success";
+            showClearAllConfirmation = false;
+            clearAllConfirmInput = string.Empty;
+            clearAllErrorMessage = null;
+            
+            // Force complete reload
+            await LoadDirectories();
+            StateHasChanged();
+            
+            // Notify ProjectList to refresh
+            NotificationService.Broadcast("directories_changed");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception clearing all directories: {ex.Message}");
+            message = $"Error clearing directories: {ex.Message}";
+            messageType = "danger";
+            clearAllErrorMessage = $"Failed to clear directories: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshDirectories()
+    {
+        await LoadDirectories();
+        message = "Directories refreshed.";
+        messageType = "success";
+        StateHasChanged();
+    }
+}

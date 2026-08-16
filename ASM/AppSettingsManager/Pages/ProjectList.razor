@@ -1,0 +1,349 @@
+@page "/mgmt/app-settings"
+@using AppSettingsManager.Models
+@using AppSettingsManager.Services
+@using System.IO
+@implements IDisposable
+@inject ProjectDiscoveryService DiscoveryService
+@inject NotificationService NotificationService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Project List</PageTitle>
+
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="mb-0">App Settings Manager</h1>
+        <button class="btn btn-primary" @onclick="RefreshProjects">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text"
+                       class="form-control"
+                       placeholder="Filter by project name or path..."
+                       @bind="searchFilter"
+                       @bind:event="oninput" />
+            </div>
+        </div>
+        <div class="col-md-3">
+            <select class="form-select" @bind="environmentFilter" @bind:event="onchange">
+                <option value="">All Environments</option>
+                <option value="Development">Development</option>
+                <option value="Staging">Staging</option>
+                <option value="Production">Production</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <button class="btn btn-outline-secondary w-100" @onclick="ToggleExpandAll">
+                @(allDirectoriesExpanded ? "Collapse All" : "Expand All")
+            </button>
+        </div>
+    </div>
+
+    @if (directoryGroups.Any())
+    {
+        @foreach (var group in directoryGroups)
+        {
+            <div class="directory-section mb-4">
+                <div class="directory-header" @onclick="() => ToggleDirectory(group.Directory.Path)">
+                    <div class="d-flex align-items-center">
+                        <span class="expand-icon me-2 @(group.Directory.IsExpanded ? "expanded" : "")">
+                            <i class="bi bi-chevron-right"></i>
+                        </span>
+                        <span class="folder-icon me-2">
+                            @{ var folderState = group.Directory.IsExpanded ? "open" : "fill"; }
+                            <i class="bi bi-folder-@folderState"></i>
+                        </span>
+                        <strong class="directory-name">@group.Directory.GetDisplayName()</strong>
+                        <span class="badge bg-primary ms-2">@group.Projects.Count project@(group.Projects.Count != 1 ? "s" : "")</span>
+                        <span class="badge bg-secondary ms-1">@group.TotalAppSettingsFiles appsettings file(s)</span>
+                    </div>
+                    <div class="directory-meta">
+                        <small class="text-muted">Last modified: @group.LatestModified.ToString("yyyy-MM-dd HH:mm")</small>
+                    </div>
+                </div>
+
+                @if (group.Directory.IsExpanded)
+                {
+                    <div class="directory-projects">
+                        @if (filteredProjectsByDirectory.TryGetValue(group.Directory.Path, out var filteredProjects) && filteredProjects.Any())
+                        {
+                            <div class="row">
+                                @foreach (var project in filteredProjects)
+                                {
+                                    <div class="col-md-6 col-lg-4 col-xl-3 mb-3">
+                                        <div class="card h-100 project-card" @onclick="() => NavigateToProject(project)">
+                                            <div class="card-header d-flex justify-content-between align-items-center">
+                                                <h6 class="mb-0 text-truncate" title="@project.Name">@project.Name</h6>
+                                                <span class="badge env-badge env-@project.Environment.ToLower()">@project.Environment</span>
+                                            </div>
+                                            <div class="card-body">
+                                                <p class="card-text text-muted small mb-2 text-truncate" title="@project.Path">
+                                                    @project.Path
+                                                </p>
+                                                <p class="card-text small mb-0">
+                                                    <i class="bi bi-clock"></i> @project.LastModified.ToString("yyyy-MM-dd HH:mm")
+                                                </p>
+                                            </div>
+                                            <div class="card-footer bg-transparent">
+                                                <button class="btn btn-sm btn-primary w-100">
+                                                    <i class="bi bi-pencil"></i> Open Editor
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="alert alert-warning m-3">
+                                No projects match the current filters.
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    }
+    else
+    {
+        <div class="alert alert-info">
+            <h5><i class="bi bi-info-circle"></i> No Hosting Directories Configured</h5>
+            <p>Go to the <a href="/mgmt/app-settings/settings">Settings</a> page to add hosting directories.</p>
+        </div>
+    }
+</div>
+
+<style>
+    .directory-section {
+        border: 1px solid #dee2e6;
+        border-radius: 0.5rem;
+        overflow: hidden;
+    }
+
+    .directory-header {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        padding: 1rem 1.25rem;
+        cursor: pointer;
+        user-select: none;
+        transition: background-color 0.2s ease;
+        border-bottom: 1px solid transparent;
+    }
+
+    .directory-header:hover {
+        background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+    }
+
+    .directory-header:hover .directory-name {
+        color: #0d6efd;
+    }
+
+    .directory-section.expanded .directory-header {
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    .directory-name {
+        transition: color 0.2s ease;
+    }
+
+    .expand-icon {
+        transition: transform 0.3s ease;
+        display: inline-block;
+    }
+
+    .expand-icon.expanded {
+        transform: rotate(90deg);
+    }
+
+    .folder-icon i {
+        font-size: 1.25rem;
+    }
+
+    .directory-projects {
+        padding: 1.25rem;
+        background: #ffffff;
+    }
+
+    .project-card {
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .project-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .env-badge {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+    }
+
+    .env-production {
+        background-color: #d1e7dd;
+        color: #0f5132;
+    }
+
+    .env-staging {
+        background-color: #fff3cd;
+        color: #664d03;
+    }
+
+    .env-development {
+        background-color: #cfe2ff;
+        color: #084298;
+    }
+
+    .text-truncate {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+</style>
+
+@code {
+    private List<HostedProjectsGroup> directoryGroups = new();
+    private Dictionary<string, List<ProjectInfo>> filteredProjectsByDirectory = new();
+    private string searchFilter = string.Empty;
+    private string environmentFilter = string.Empty;
+    private bool allDirectoriesExpanded = true;
+    private bool _isDisposed = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshProjects();
+    }
+    
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender && !_isDisposed)
+        {
+            // Register for notifications when directories change
+            _directoryChangeHandler = async (message) =>
+            {
+                if (message.Contains("directories_changed") && !_isDisposed)
+                {
+                    try
+                    {
+                        await InvokeAsync(async () =>
+                        {
+                            if (!_isDisposed)
+                            {
+                                await RefreshProjects();
+                            }
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Notification error: {ex.Message}");
+                    }
+                }
+            };
+            NotificationService.RegisterListener(_directoryChangeHandler);
+        }
+    }
+
+    public void Dispose()
+    {
+        _isDisposed = true;
+        if (_directoryChangeHandler != null)
+        {
+            NotificationService.UnregisterListener(_directoryChangeHandler);
+        }
+    }
+    
+    private Action<string>? _directoryChangeHandler;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        FilterProjects();
+    }
+
+    private async Task RefreshProjects()
+    {
+        try
+        {
+            directoryGroups = await DiscoveryService.DiscoverProjectsGroupedByDirectory();
+            allDirectoriesExpanded = directoryGroups.All(g => g.Directory.IsExpanded);
+            FilterProjects();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error discovering projects: {ex.Message}");
+        }
+    }
+
+    private void FilterProjects()
+    {
+        filteredProjectsByDirectory.Clear();
+
+        foreach (var group in directoryGroups)
+        {
+            var filtered = group.Projects.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchFilter))
+            {
+                filtered = filtered.Where(p =>
+                    p.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ||
+                    p.Path.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)
+                );
+            }
+
+            if (!string.IsNullOrWhiteSpace(environmentFilter))
+            {
+                filtered = filtered.Where(p =>
+                    p.Environment.Equals(environmentFilter, StringComparison.OrdinalIgnoreCase)
+                );
+            }
+
+            filteredProjectsByDirectory[group.Directory.Path] = filtered.ToList();
+        }
+
+        StateHasChanged();
+    }
+
+    private void ToggleDirectory(string directoryPath)
+    {
+        var group = directoryGroups.FirstOrDefault(g => g.Directory.Path == directoryPath);
+        if (group != null)
+        {
+            group.Directory.IsExpanded = !group.Directory.IsExpanded;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleExpandAll()
+    {
+        allDirectoriesExpanded = !allDirectoriesExpanded;
+        
+        foreach (var group in directoryGroups)
+        {
+            group.Directory.IsExpanded = allDirectoriesExpanded;
+        }
+
+        StateHasChanged();
+    }
+
+    private void NavigateToProject(ProjectInfo project)
+    {
+        var queryParams = new Dictionary<string, string>
+        {
+            { "path", project.AppSettingsPath },
+            { "environment", project.Environment }
+        };
+        
+        if (project.AppSettingsFiles.Count > 1)
+        {
+            queryParams["files"] = string.Join("|", project.AppSettingsFiles.Keys);
+        }
+        
+        var queryString = string.Join("&", queryParams.Select(kvp => $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
+        Navigation.NavigateTo($"/mgmt/app-settings/editor?{queryString}");
+    }
+}
