@@ -26,7 +26,7 @@
                        class="form-control"
                        placeholder="Filter by project name or path..."
                        @bind="searchFilter"
-                       @bind:event="oninput" />
+                       @oninput="RefreshProjects" />
             </div>
         </div>
         <div class="col-md-3">
@@ -44,9 +44,9 @@
         </div>
     </div>
 
-    @if (directoryGroups.Any())
+    @if (filteredDirectoryGroups.Any())
     {
-        @foreach (var group in directoryGroups)
+        @foreach (var group in filteredDirectoryGroups)
         {
             <div class="directory-section mb-4">
                 <div class="directory-header" @onclick="() => ToggleDirectory(group.Directory.Path)">
@@ -208,6 +208,7 @@
 
 @code {
     private List<HostedProjectsGroup> directoryGroups = new();
+    private List<HostedProjectsGroup> filteredDirectoryGroups = new();
     private Dictionary<string, List<ProjectInfo>> filteredProjectsByDirectory = new();
     private string searchFilter = string.Empty;
     private string environmentFilter = string.Empty;
@@ -218,7 +219,7 @@
     {
         await RefreshProjects();
     }
-    
+
     protected override void OnAfterRender(bool firstRender)
     {
         if (firstRender && !_isDisposed)
@@ -256,7 +257,7 @@
             NotificationService.UnregisterListener(_directoryChangeHandler);
         }
     }
-    
+
     private Action<string>? _directoryChangeHandler;
 
     protected override async Task OnParametersSetAsync()
@@ -282,6 +283,15 @@
     private void FilterProjects()
     {
         filteredProjectsByDirectory.Clear();
+        filteredDirectoryGroups = directoryGroups.Where(g =>
+            g.Projects.Any(p =>
+                (string.IsNullOrWhiteSpace(searchFilter) ||
+                 p.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ||
+                 p.Path.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)) &&
+                (string.IsNullOrWhiteSpace(environmentFilter) ||
+                 p.Environment.Equals(environmentFilter, StringComparison.OrdinalIgnoreCase))
+            )
+        ).ToList();
 
         foreach (var group in directoryGroups)
         {
@@ -304,7 +314,6 @@
 
             filteredProjectsByDirectory[group.Directory.Path] = filtered.ToList();
         }
-
         StateHasChanged();
     }
 
@@ -321,7 +330,7 @@
     private void ToggleExpandAll()
     {
         allDirectoriesExpanded = !allDirectoriesExpanded;
-        
+
         foreach (var group in directoryGroups)
         {
             group.Directory.IsExpanded = allDirectoriesExpanded;
@@ -337,12 +346,12 @@
             { "path", project.AppSettingsPath },
             { "environment", project.Environment }
         };
-        
+
         if (project.AppSettingsFiles.Count > 1)
         {
             queryParams["files"] = string.Join("|", project.AppSettingsFiles.Keys);
         }
-        
+
         var queryString = string.Join("&", queryParams.Select(kvp => $"{kvp.Key}={Uri.EscapeDataString(kvp.Value)}"));
         Navigation.NavigateTo($"/mgmt/app-settings/editor?{queryString}");
     }
